@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>World Digital Clock — 12h + Analog</title>
+  <style>
+    :root{
+      --bg:#071027;
+      --card:#081829;
+      --accent:#6ee7b7;
+      --muted:#9aa7bd;
+      --glass: rgba(255,255,255,0.03);
+    }
+    html,body{height:100%;margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial;}
+    body{
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      background:linear-gradient(180deg,#071027 0%, #081829 60%);
+      color:white;
+      padding:18px;
+    }
+    .wrap{ width:100%; max-width:980px; }
+    header{ display:flex; gap:12px; align-items:center; justify-content:space-between; margin-bottom:14px; }
+    h1{ font-size:1.1rem; margin:0; font-weight:600; }
+    .controls{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    select,input[type="text"]{
+      background:transparent;
+      border:1px solid rgba(255,255,255,0.06);
+      color:var(--muted);
+      padding:8px 10px;
+      border-radius:8px;
+      outline:none;
+      font-size:0.95rem;
+    }
+    button{
+      background:var(--accent);
+      color:#042023;
+      border:none;
+      padding:8px 12px;
+      border-radius:8px;
+      cursor:pointer;
+      font-weight:600;
+    }
+    .small-btn{ padding:6px 10px; font-weight:600; border-radius:6px; }
+    .grid{
+      display:grid;
+      grid-template-columns:repeat(auto-fit, minmax(220px,1fr));
+      gap:10px;
+    }
+
+    /* Compact card styles */
+    .card{
+      background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+      border:1px solid var(--glass);
+      padding:10px;
+      border-radius:10px;
+      min-height:92px;
+      display:flex;
+      gap:10px;
+      align-items:center;
+      justify-content:space-between;
+    }
+    .left{
+      display:flex;
+      gap:10px;
+      align-items:center;
+    }
+    canvas.analog{ width:72px; height:72px; border-radius:50%; background:transparent; }
+    .meta{ display:flex; flex-direction:column; gap:6px; min-width:120px; }
+    .zone{ font-weight:700; font-size:0.97rem; line-height:1; }
+    .region{ color:var(--muted); font-size:0.78rem; }
+    .time{ font-size:1.15rem; font-weight:700; letter-spacing:0.01em; }
+    .date{ font-size:0.82rem; color:var(--muted); }
+    .row{ display:flex; gap:8px; align-items:center; }
+    .small{ font-size:0.75rem; color:var(--muted); }
+    .remove{ background:transparent; border:1px solid rgba(255,255,255,0.04); color:var(--muted); padding:6px; border-radius:6px; cursor:pointer; font-size:0.82rem; }
+    footer{ margin-top:12px; color:var(--muted); font-size:0.82rem; text-align:center; }
+    /* toggle */
+    .toggle { display:flex; gap:8px; align-items:center; font-size:0.9rem; color:var(--muted); }
+    @media (prefers-color-scheme: light){
+      :root{ --bg:#fff; --card:#f6f7fb; --accent:#0b5; --muted:#556; --glass: rgba(0,0,0,0.04); }
+      body{ background:linear-gradient(180deg,#e9eef9,#f6fbff); color:#062026 }
+      button{ color:white }
+      .remove{ color:var(--muted); border:1px solid rgba(0,0,0,0.06); }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap" role="application" aria-labelledby="title">
+    <header>
+      <h1 id="title">World Clock — 12‑hour + Analog</h1>
+      <div class="controls">
+        <select id="tzSelect" title="Add timezone">
+          <option value="UTC">UTC</option>
+          <option value="Europe/London">Europe/London</option>
+          <option value="Europe/Paris">Europe/Paris</option>
+          <option value="America/New_York">America/New_York</option>
+          <option value="America/Los_Angeles">America/Los_Angeles</option>
+          <option value="Asia/Tokyo">Asia/Tokyo</option>
+          <option value="Asia/Kolkata">Asia/Kolkata</option>
+          <option value="Australia/Sydney">Australia/Sydney</option>
+        </select>
+        <input id="customZone" placeholder="IANA zone (ex: Asia/Seoul)" />
+        <button id="addBtn" class="small-btn">Ajouter</button>
+        <button id="clearBtn" class="small-btn" style="background:transparent;color:var(--muted);border:1px solid rgba(255,255,255,0.06)">Reset</button>
+        <label class="toggle"><input type="checkbox" id="formatToggle" checked /> 12‑hour</label>
+      </div>
+    </header>
+
+    <main>
+      <section class="grid" id="zones" aria-live="polite" aria-atomic="false"></section>
+    </main>
+
+    <footer>Cartes compactes, affichage 12h par défaut, horloges analogiques synchronisées. Persistance locale (localStorage).</footer>
+  </div>
+
+<script>
+(function(){
+  if (!window.Intl || !Intl.DateTimeFormat) {
+    document.getElementById('zones').innerHTML = '<div style="color:tomato">Votre navigateur ne supporte pas Intl.DateTimeFormat avec timeZone.</div>';
+    return;
+  }
+
+  const STORAGE_KEY = 'world_clock_zones_v2';
+  const defaultZones = ['UTC','Europe/Paris','America/New_York','Asia/Tokyo'];
+  let zones = loadZones();
+
+  const zonesContainer = document.getElementById('zones');
+  const tzSelect = document.getElementById('tzSelect');
+  const customZone = document.getElementById('customZone');
+  const addBtn = document.getElementById('addBtn');
+  const clearBtn = document.getElementById('clearBtn');
+  const formatToggle = document.getElementById('formatToggle');
+
+  function loadZones(){
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return defaultZones.slice();
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length) return parsed;
+    } catch(e){}
+    return defaultZones.slice();
+  }
+  function saveZones(){ try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(zones)); }catch(e){} }
+
+  function createCard(tz){
+    const card = document.createElement('article');
+    card.className = 'card';
+    card.dataset.zone = tz;
+
+    const left = document.createElement('div'); left.className = 'left';
+    const canvas = document.createElement('canvas'); canvas.className = 'analog';
+    // prepare pixel ratio for crisp canvas
+    const size = 72;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = size * dpr;
+    canvas.height = size * dpr;
+    canvas.style.width = size + 'px';
+    canvas.style.height = size + 'px';
+    canvas._dpr = dpr;
+
+    const meta = document.createElement('div'); meta.className = 'meta';
+    const zoneName = document.createElement('div'); zoneName.className = 'zone'; zoneName.textContent = tz;
+    const region = document.createElement('div'); region.className = 'region'; region.textContent = '';
+    meta.append(zoneName, region);
+
+    left.append(canvas, meta);
+
+    const right = document.createElement('div'); right.style.display='flex'; right.style.flexDirection='column'; right.style.gap='6px'; right.style.alignItems='flex-end';
+    const timeEl = document.createElement('div'); timeEl.className='time'; timeEl.textContent='--:--:--';
+    const dateEl = document.createElement('div'); dateEl.className='date'; dateEl.textContent='';
+    const row = document.createElement('div'); row.className='row';
+    const offsetEl = document.createElement('div'); offsetEl.className='small'; offsetEl.textContent='';
+    const removeBtn = document.createElement('button'); removeBtn.className='remove'; removeBtn.textContent='Remove';
+    removeBtn.addEventListener('click', ()=> removeZone(tz));
+    row.append(offsetEl, removeBtn);
+
+    right.append(timeEl, dateEl, row);
+
+    card.append(left, right);
+
+    // Attach references for update loop
+    card._canvas = canvas;
+    card._ctx = canvas.getContext('2d');
+    card._timeEl = timeEl;
+    card._dateEl = dateEl;
+    card._offsetEl = offsetEl;
+    card._regionEl = region;
+
+    return card;
+  }
+
+  function renderZones(){
+    zonesContainer.innerHTML = '';
+    zones.forEach(z => zonesContainer.appendChild(createCard(z)));
+    updateAll(); // initial render
+  }
+
+  function getPartsForZone(tz, now, hour12){
+    try {
+      const timeFmt = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: hour12 });
+      const dateFmt = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday:'short', year:'numeric', month:'short', day:'numeric' });
+      const tzNameFmt = new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName:'short' });
+
+      const tParts = timeFmt.formatToParts(now);
+      const dParts = dateFmt.formatToParts(now);
+      const tzParts = tzNameFmt.formatToParts(now);
+
+      const hourPart = tParts.find(p => p.type==='hour') || {value:'00'};
+      const minutePart = tParts.find(p => p.type==='minute') || {value:'00'};
+      const secondPart = tParts.find(p => p.type==='second') || {value:'00'};
+      const day = dParts.find(p => p.type==='day')?.value || '';
+      const month = dParts.find(p => p.type==='month')?.value || '';
+      const weekday = dParts.find(p => p.type==='weekday')?.value || '';
+      const tzName = tzParts.find(p => p.type==='timeZoneName')?.value || '';
+
+      let hour = parseInt(hourPart.value,10);
+      const minute = parseInt(minutePart.value,10);
+      const second = parseInt(secondPart.value,10);
+
+      return { hour, minute, second, day, month, weekday, tzName, rawParts: tParts };
+    } catch(e){
+      return null;
+    }
+  }
+
+  function drawAnalog(canvas, ctx, h24, m, s){
+    const dpr = canvas._dpr || 1;
+    const w = canvas.width;
+    const h = canvas.height;
+    ctx.clearRect(0,0,w,h);
+    const cx = w/2, cy = h/2;
+    const radius = Math.min(w,h)/2 * 0.9;
+
+    // background circle
+    ctx.beginPath();
+    ctx.arc(cx,cy,radius,0,Math.PI*2);
+    ctx.fillStyle = 'rgba(255,255,255,0.02)';
+    ctx.fill();
+
+    // ticks
+    ctx.save();
+    ctx.translate(cx,cy);
+    for (let i=0;i<60;i++){
+      ctx.beginPath();
+      const ang = i * Math.PI/30;
+      const len = (i%5===0) ? radius*0.12 : radius*0.06;
+      ctx.moveTo((radius - len)*Math.cos(ang), (radius - len)*Math.sin(ang));
+      ctx.lineTo(radius*Math.cos(ang), radius*Math.sin(ang));
+      ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+      ctx.lineWidth = (i%5===0)?2*dpr:1*dpr;
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // hour hand
+    const hourIn12 = h24 % 12;
+    const hourAngle = ((hourIn12 + m/60 + s/3600) * Math.PI/6) - Math.PI/2;
+    ctx.beginPath();
+    ctx.lineWidth = 3 * dpr;
+    ctx.lineCap = 'round';
+    ctx.moveTo(cx,cy);
+    ctx.lineTo(cx + Math.cos(hourAngle) * radius * 0.5, cy + Math.sin(hourAngle) * radius * 0.5);
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+    ctx.stroke();
+
+    // minute hand
+    const minuteAngle = ((m + s/60) * Math.PI/30) - Math.PI/2;
+    ctx.beginPath();
+    ctx.lineWidth = 2.2 * dpr;
+    ctx.moveTo(cx,cy);
+    ctx.lineTo(cx + Math.cos(minuteAngle) * radius * 0.75, cy + Math.sin(minuteAngle) * radius * 0.75);
+    ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+    ctx.stroke();
+
+    // second hand
+    const secondAngle = (s * Math.PI/30) - Math.PI/2;
+    ctx.beginPath();
+    ctx.lineWidth = 1.2 * dpr;
+    ctx.moveTo(cx + Math.cos(secondAngle) * -radius*0.15, cy + Math.sin(secondAngle) * -radius*0.15);
+    ctx.lineTo(cx + Math.cos(secondAngle) * radius * 0.85, cy + Math.sin(secondAngle) * radius * 0.85);
+    ctx.strokeStyle = '#ff6b6b';
+    ctx.stroke();
+
+    // center dot
+    ctx.beginPath();
+    ctx.arc(cx,cy,3*dpr,0,Math.PI*2);
+    ctx.fillStyle = '#ff6b6b';
+    ctx.fill();
+  }
+
+  function updateAll(){
+    const now = new Date();
+    const cards = Array.from(zonesContainer.querySelectorAll('.card'));
+    cards.forEach(card => {
+      const tz = card.dataset.zone;
+      const hour12 = formatToggle.checked === true;
+      const parts = getPartsForZone(tz, now, hour12);
+      if (!parts){
+        card._timeEl.textContent = 'Invalid zone';
+        card._dateEl.textContent = '';
+        card._offsetEl.textContent = '';
+        card._regionEl.textContent = tz.split('/').slice(0,2).join(' • ');
+        return;
+      }
+      const {hour, minute, second, weekday, month, day, tzName} = parts;
+      let ampm = '';
+      const rawParts = parts.rawParts || [];
+      const ampmPart = rawParts.find(p=>p.type==='dayPeriod') || rawParts.find(p=>p.type==='literal' && (p.value.toUpperCase().includes('AM')||p.value.toUpperCase().includes('PM')));
+      if (ampmPart && ampmPart.value) ampm = ' ' + ampmPart.value.toUpperCase();
+      const mm = String(minute).padStart(2,'0');
+      const ss = String(second).padStart(2,'0');
+      let hh = String(hour).padStart(2,'0');
+      if (!formatToggle.checked){
+        const parts24 = getPartsForZone24(tz, now);
+        hh = String(parts24.hour).padStart(2,'0');
+      }
+      card._timeEl.textContent = `${hh}:${mm}:${ss}${ formatToggle.checked ? ampm : '' }`;
+      card._dateEl.textContent = `${weekday} ${day} ${month}`;
+      card._offsetEl.textContent = tzName || '';
+      card._regionEl.textContent = tz.split('/').slice(0,2).join(' • ');
+
+      const ctx = card._ctx;
+      const canvas = card._canvas;
+      const parts24 = getPartsForZone24(tz, now);
+      if (parts24){
+        drawAnalog(canvas, ctx, parts24.hour, parts24.minute, parts24.second);
+      }
+    });
+  }
+
+  function getPartsForZone24(tz, now){
+    try {
+      const timeFmt = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+      const tParts = timeFmt.formatToParts(now);
+      const hour = parseInt((tParts.find(p=>p.type==='hour')||{value:'00'}).value,10);
+      const minute = parseInt((tParts.find(p=>p.type==='minute')||{value:'00'}).value,10);
+      const second = parseInt((tParts.find(p=>p.type==='second')||{value:'00'}).value,10);
+      return {hour, minute, second};
+    } catch(e){ return null; }
+  }
+
+  function addZone(tz){
+    if (!tz) return;
+    if (zones.includes(tz)){ flash(tz + ' d\u00E9j\u00E0 ajout\u00E9'); return; }
+    try { new Intl.DateTimeFormat(undefined, {timeZone: tz}); }
+    catch(e){ flash('Time zone IANA invalide : ' + tz); return; }
+    zones.push(tz);
+    saveZones();
+    renderZones();
+  }
+  function removeZone(tz){ zones = zones.filter(z=>z!==tz); saveZones(); renderZones(); }
+  function flash(msg){ const orig = document.title; document.title = msg; setTimeout(()=>document.title = orig, 1200); }
+
+  addBtn.addEventListener('click', ()=> {
+    const sel = tzSelect.value.trim();
+    const custom = customZone.value.trim();
+    const toAdd = custom || sel;
+    if (!toAdd) { flash('Choisissez une zone'); return; }
+    addZone(toAdd);
+    customZone.value = '';
+  });
+  customZone.addEventListener('keydown', e=>{ if (e.key==='Enter') addBtn.click(); });
+  clearBtn.addEventListener('click', ()=>{ if (!confirm('R\u00E9initialiser les fuseaux enregistr\u00E9s ?')) return; zones = defaultZones.slice(); saveZones(); renderZones(); });
+  formatToggle.addEventListener('change', ()=> updateAll());
+
+  function renderZones(){ zonesContainer.innerHTML = ''; zones.forEach(z=> zonesContainer.appendChild(createCard(z))); updateAll(); }
+
+  renderZones();
+
+  function startTicker(){
+    updateAll();
+    const now = Date.now();
+    const msToNextSecond = 1000 - (now % 1000);
+    setTimeout(()=> {
+      updateAll();
+      setInterval(updateAll, 1000);
+    }, msToNextSecond);
+  }
+  startTicker();
+
+  window._worldClock = { addZone, removeZone, zones };
+})();
+</script>
+</body>
+</html>
