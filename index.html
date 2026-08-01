@@ -92,6 +92,11 @@ select{
     color:#dc3545;
 }
 
+/* reserved actions */
+#reserved-actions{
+    margin-top:12px;
+}
+
 /* visually-hidden helper for accessibility if needed */
 .sr-only{
     position:absolute;
@@ -138,6 +143,11 @@ select{
 
 <div id="message" role="status" aria-live="polite"></div>
 
+<div id="reserved-actions" style="display:none;" aria-hidden="true">
+  <button id="btnModifier" type="button" class="oui">Modifier</button>
+  <button id="btnAnnuler" type="button" class="non">Annuler</button>
+</div>
+
 </div>
 
 <script>
@@ -159,6 +169,11 @@ const btnValider = document.getElementById('btnValider');
 const heuresWrap = document.getElementById('heures');
 const heureSelect = document.getElementById('heure');
 const messageEl = document.getElementById('message');
+const reservedActions = document.getElementById('reserved-actions');
+const btnModifier = document.getElementById('btnModifier');
+const btnAnnuler = document.getElementById('btnAnnuler');
+
+const STORAGE_KEY = 'reservation';
 
 /* Initialize date display */
 function afficherProchaineDate(){
@@ -169,22 +184,52 @@ function afficherProchaineDate(){
 }
 afficherProchaineDate();
 
-/* Show hours */
+/* Persistence helpers */
+function saveReservation(res){
+  try{
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(res));
+  }catch(e){
+    console.warn('Impossible de sauvegarder la réservation:', e);
+  }
+}
+
+function loadReservation(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  }catch(e){
+    console.warn('Impossible de lire la réservation:', e);
+    return null;
+  }
+}
+
+function clearReservation(){
+  try{
+    localStorage.removeItem(STORAGE_KEY);
+  }catch(e){
+    console.warn('Impossible de supprimer la réservation:', e);
+  }
+}
+
+/* UI actions */
 function showHours(){
   heuresWrap.style.display = 'block';
   heuresWrap.setAttribute('aria-hidden', 'false');
   messageEl.classList.remove('error');
   messageEl.textContent = '';
+  reservedActions.style.display = 'none';
+  reservedActions.setAttribute('aria-hidden', 'true');
   // focus the select so keyboard users can continue
   setTimeout(() => { heureSelect.focus(); }, 50);
 }
 
-/* Hide hours and show message */
 function hideHours(){
   heuresWrap.style.display = 'none';
   heuresWrap.setAttribute('aria-hidden', 'true');
   messageEl.classList.remove('error');
   messageEl.textContent = 'Aucune réservation sélectionnée.';
+  reservedActions.style.display = 'none';
+  reservedActions.setAttribute('aria-hidden', 'true');
 }
 
 /* Validate and confirm */
@@ -200,16 +245,85 @@ function confirmReservation(){
   const dateText = dateTimeEl.textContent;
   // display user-friendly hour text (the option's text)
   const hourText = heureSelect.options[heureSelect.selectedIndex].text;
-  messageEl.innerHTML = `✅ Votre réservation est confirmée pour le <strong>${dateText}</strong> à <strong>${hourText}</strong>.`;
-  // Optionally hide the selector after confirming:
+  const dateISO = dateTimeEl.getAttribute('datetime') || new Date().toISOString().split('T')[0];
+  const reservation = {
+    dateText: dateText,
+    dateISO: dateISO,
+    hourValue: value,
+    hourText: hourText,
+    createdAt: new Date().toISOString()
+  };
+  saveReservation(reservation);
+  renderReservation(reservation);
+}
+
+function renderReservation(reservation){
+  if (!reservation) return;
+  messageEl.classList.remove('error');
+  messageEl.innerHTML = `✅ Votre réservation est confirmée pour le <strong>${reservation.dateText}</strong> à <strong>${reservation.hourText}</strong>.`;
+  // hide selector
   heuresWrap.style.display = 'none';
   heuresWrap.setAttribute('aria-hidden', 'true');
+  // show actions
+  reservedActions.style.display = 'block';
+  reservedActions.setAttribute('aria-hidden', 'false');
+}
+
+function cancelReservation(){
+  clearReservation();
+  messageEl.classList.remove('error');
+  messageEl.textContent = 'Votre réservation a été annulée.';
+  reservedActions.style.display = 'none';
+  reservedActions.setAttribute('aria-hidden', 'true');
+}
+
+/* Load saved reservation on init */
+function initFromStorage(){
+  const saved = loadReservation();
+  if (saved){
+    // if the saved date differs from computed next wednesday, still show saved date
+    renderReservation(saved);
+    // set select to saved hour to allow quick modification
+    for (let i=0;i<heureSelect.options.length;i++){
+      if (heureSelect.options[i].value === saved.hourValue){
+        heureSelect.selectedIndex = i;
+        break;
+      }
+    }
+  }
 }
 
 /* Event listeners */
-btnOui.addEventListener('click', showHours);
+btnOui.addEventListener('click', () => {
+  // If there is a saved reservation, allow modifying it
+  const saved = loadReservation();
+  if (saved){
+    // pre-select saved hour
+    for (let i=0;i<heureSelect.options.length;i++){
+      if (heureSelect.options[i].value === saved.hourValue){
+        heureSelect.selectedIndex = i;
+        break;
+      }
+    }
+  }
+  showHours();
+});
 btnNon.addEventListener('click', hideHours);
 btnValider.addEventListener('click', confirmReservation);
+btnModifier.addEventListener('click', () => {
+  const saved = loadReservation();
+  if (saved){
+    // pre-select saved hour
+    for (let i=0;i<heureSelect.options.length;i++){
+      if (heureSelect.options[i].value === saved.hourValue){
+        heureSelect.selectedIndex = i;
+        break;
+      }
+    }
+  }
+  showHours();
+});
+btnAnnuler.addEventListener('click', cancelReservation);
 
 /* keyboard: allow Enter on select to confirm (optional) */
 heureSelect.addEventListener('keydown', function(e){
@@ -218,6 +332,9 @@ heureSelect.addEventListener('keydown', function(e){
     confirmReservation();
   }
 });
+
+/* Run init */
+initFromStorage();
 </script>
 
 </body>
